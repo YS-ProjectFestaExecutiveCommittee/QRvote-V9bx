@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大会ブース 投票システム</title>
+<!-- Noto Sans JP フォントの読み込み -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary-color: #0056b3;
+  --secondary-color: #e9ecef;
+  --success-color: #28a745;
+  --error-color: #dc3545;
+  --text-main: #333333;
+  --bg-color: #f4f7f6;
+}
+body {
+  font-family: 'Noto Sans JP', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+.container {
+  background-color: #ffffff;
+  padding: 2rem;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  width: 90%;
+  max-width: 400px;
+  text-align: center;
+}
+h1 {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+  color: var(--primary-color);
+}
+.booth-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 1rem 0;
+  padding: 1rem;
+  background-color: var(--secondary-color);
+  border-radius: 8px;
+  display: none;
+}
+.status-message {
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+  color: #666;
+  min-height: 1.5em;
+}
+.error-message {
+  color: var(--error-color);
+  font-weight: 500;
+}
+.success-message {
+  color: var(--success-color);
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+.vote-btn {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  padding: 1rem 2rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  border-radius: 50px;
+  cursor: pointer;
+  width: 100%;
+  transition: background-color 0.3s, transform 0.1s;
+  display: none;
+  font-family: 'Noto Sans JP', sans-serif;
+}
+.vote-btn:hover { background-color: #004494; }
+.vote-btn:active { transform: scale(0.98); }
+.vote-btn:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+  transform: none;
+}
+.loader {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid var(--primary-color);
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 1rem auto;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+#check-process {
+  font-size: 0.85rem;
+  color: #888;
+  margin-top: 1rem;
+  text-align: left;
+  background: #f9f9f9;
+  padding: 10px;
+  border-radius: 5px;
+  display: block;
+}
+.check-item { margin-bottom: 4px; }
+.check-item.ok { color: var(--success-color); }
+.check-item.error { color: var(--error-color); }
+.check-item.warning { color: #d39e00; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>大会投票システム</h1>
+  
+  <div id="loader" class="loader"></div>
+  <div id="status-msg" class="status-message">環境の安全性とブース情報を確認しています...</div>
+  
+  <div id="booth-display" class="booth-name"></div>
+  
+  <button id="vote-btn" class="vote-btn">このブースに投票する</button>
+
+  <div id="check-process">
+    <div id="chk-env" class="check-item">端末固有認証: 実行中...</div>
+    <div id="chk-dup" class="check-item">重複投票チェック: 実行中...</div>
+  </div>
+</div>
+
+<script>
+// ==========================================
+// 設定・定数
+// ==========================================
+const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwch7rZrSnlV0VS_TKNyZw3ZYqj5tZUfA6Wd2qbU4ghS74x8QazcGIlkrifVEIGdKEbzw/exec";
+const SECURITY_SALT = "V0t3_s3cUr1ty_S@lt_2026!"; // GAS側のソルトと一致させる
+
+let currentBoothId = null;
+let generatedVisitorId = null;
+
+// ==========================================
+// ユーティリティ
+// ==========================================
+function updateUI(state, message = "") {
+  const loader = document.getElementById('loader');
+  const statusMsg = document.getElementById('status-msg');
+  const boothDisplay = document.getElementById('booth-display');
+  const voteBtn = document.getElementById('vote-btn');
+  const checkProcess = document.getElementById('check-process');
+
+  statusMsg.textContent = message;
+
+  switch(state) {
+    case 'loading':
+      loader.style.display = 'block';
+      voteBtn.style.display = 'none';
+      statusMsg.className = 'status-message';
+      break;
+    case 'ready':
+      loader.style.display = 'none';
+      boothDisplay.style.display = 'block';
+      voteBtn.style.display = 'block';
+      statusMsg.className = 'status-message';
+      break;
+    case 'error':
+      loader.style.display = 'none';
+      voteBtn.style.display = 'none';
+      statusMsg.className = 'status-message error-message';
+      break;
+    case 'success':
+      loader.style.display = 'none';
+      voteBtn.style.display = 'none';
+      boothDisplay.style.display = 'none';
+      checkProcess.style.display = 'none';
+      statusMsg.className = 'status-message success-message';
+      break;
+  }
+}
+
+function updateCheckItem(id, status, text) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.textContent = text;
+    el.className = `check-item ${status}`;
+  }
+}
+
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ==========================================
+// 強化版フィンガープリント生成群
+// ==========================================
+async function getClientIP() {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const response = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
+    clearTimeout(timeoutId);
+    const data = await response.json();
+    return data.ip;
+  } catch (error) {
+    return 'unknown_ip';
+  }
+}
+
+// 1. Audio Fingerprint (ハードウェアの音声処理特性)
+async function getAudioFingerprint() {
+  try {
+    const audioCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 44100, 44100);
+    const oscillator = audioCtx.createOscillator();
+    oscillator.type = 'triangle';
+    oscillator.frequency.value = 10000;
+    const compressor = audioCtx.createDynamicsCompressor();
+    compressor.threshold.value = -50;
+    compressor.knee.value = 40;
+    compressor.ratio.value = 12;
+    compressor.reduction.value = -20;
+    compressor.attack.value = 0;
+    compressor.release.value = 0.25;
+    oscillator.connect(compressor);
+    compressor.connect(audioCtx.destination);
+    oscillator.start(0);
+    
+    const renderPromise = audioCtx.startRendering();
+    const buffer = await renderPromise;
+    let hash = 0;
+    const channelData = buffer.getChannelData(0);
+    for (let i = 4500; i < 5000; i++) {
+      hash += Math.abs(channelData[i]);
+    }
+    return hash.toString();
+  } catch (e) {
+    return 'audio_fp_error';
+  }
+}
+
+// 2. 高度なCanvas Fingerprint
+function getCanvasFingerprint() {
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 200; canvas.height = 50;
+    ctx.textBaseline = "top";
+    ctx.font = "14px 'Arial'";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "#f60";
+    ctx.fillRect(125, 1, 62, 20);
+    ctx.fillStyle = "#069";
+    ctx.fillText("VoteSec2026, \ud83d\ude03", 2, 15);
+    ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
+    ctx.fillText("VoteSec2026, \ud83d\ude03", 4, 17);
+    return canvas.toDataURL();
+  } catch (e) {
+    return 'canvas_error';
+  }
+}
+
+// 3. WebGL Fingerprint (GPU情報)
+function getWebGLFingerprint() {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return 'no_webgl';
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    const vendor = debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : 'unknown';
+    const renderer = debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'unknown';
+    return vendor + '|' + renderer;
+  } catch (e) {
+    return 'error_webgl';
+  }
+}
+
+// 4. フォントレンダリング特性
+function getFontFingerprint() {
+  try {
+    const span = document.createElement('span');
+    span.innerHTML = 'mmmmmmmmmmlli';
+    span.style.fontSize = '72px';
+    span.style.fontFamily = "'Arial', sans-serif";
+    span.style.visibility = 'hidden';
+    span.style.position = 'absolute';
+    document.body.appendChild(span);
+    const size = span.offsetWidth + 'x' + span.offsetHeight;
+    document.body.removeChild(span);
+    return size;
+  } catch (e) { return 'font_error'; }
+}
+
+async function generateFingerprint() {
+  try {
+    if (navigator.webdriver) throw new Error("自動化プログラムからのアクセスは許可されていません。");
+
+    // 並列で特性を取得
+    const [clientIP, audioFp] = await Promise.all([
+      getClientIP(),
+      getAudioFingerprint()
+    ]);
+
+    // 【強化】タイムゾーンや言語設定など、環境固有の情報を追加して識別精度を向上
+    const components = [
+      clientIP,
+      audioFp,
+      getCanvasFingerprint(),
+      getWebGLFingerprint(),
+      getFontFingerprint(),
+      navigator.hardwareConcurrency || 'unknown',
+      navigator.deviceMemory || 'unknown',
+      screen.width + 'x' + screen.height + 'x' + (screen.colorDepth || ''),
+      new Date().getTimezoneOffset(),
+      Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown', // 強化ポイント
+      navigator.language || navigator.userLanguage || 'unknown',     // 強化ポイント
+      navigator.platform
+    ].join('|||');
+
+    const fingerprint = await sha256(components);
+    updateCheckItem('chk-env', 'ok', '端末固有認証: 正常 (ID生成完了)');
+    return fingerprint;
+  } catch (error) {
+    updateCheckItem('chk-env', 'error', '端末固有認証: 失敗');
+    throw error;
+  }
+}
+
+// ==========================================
+// 4重のローカルフラグ保存（重複投票防止）
+// ==========================================
+function initIndexedDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('VoteSystemDB_v2', 1);
+    request.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('vote_records')) {
+        db.createObjectStore('vote_records', { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function checkIndexedDB() {
+  try {
+    const db = await initIndexedDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('vote_records', 'readonly');
+      const store = tx.objectStore('vote_records');
+      const req = store.get('has_voted');
+      req.onsuccess = () => resolve(!!req.result);
+      req.onerror = () => resolve(false);
+    });
+  } catch (e) { return false; }
+}
+
+async function checkCacheStorage() {
+  try {
+    if ('caches' in window) {
+      const cache = await caches.open('vote-system-cache');
+      const response = await cache.match('/vote-status');
+      return !!response;
+    }
+  } catch (e) {}
+  return false;
+}
+
+async function saveCacheStorage(boothId) {
+  try {
+    if ('caches' in window) {
+      const cache = await caches.open('vote-system-cache');
+      const res = new Response(JSON.stringify({ voted: true, boothId: boothId }));
+      await cache.put('/vote-status', res);
+    }
+  } catch (e) {}
+}
+
+async function checkLocalVoteRecord() {
+  // 4重チェック: 1つでも痕跡があれば投票済みとみなす
+  const votedLocal = localStorage.getItem('has_voted');
+  const cookies = document.cookie.split(';');
+  const votedCookie = cookies.some(c => c.trim().startsWith('has_voted=true'));
+  const votedIndexedDB = await checkIndexedDB();
+  const votedCache = await checkCacheStorage();
+
+  if (votedLocal || votedCookie || votedIndexedDB || votedCache) {
+    updateCheckItem('chk-dup', 'error', '重複チェック: 既に投票済みの端末です');
+    throw new Error("既にこの端末から投票が行われています。（一人一回までです）");
+  }
+  updateCheckItem('chk-dup', 'ok', '重複チェック: クリア');
+}
+
+async function saveLocalVoteRecord(boothId) {
+  localStorage.setItem('has_voted', 'true');
+  localStorage.setItem('voted_booth', boothId);
+  const d = new Date();
+  d.setTime(d.getTime() + (365 * 24 * 60 * 60 * 1000));
+  document.cookie = `has_voted=true; expires=${d.toUTCString()}; path=/`;
+
+  try {
+    const db = await initIndexedDB();
+    const tx = db.transaction('vote_records', 'readwrite');
+    tx.objectStore('vote_records').put({ id: 'has_voted', boothId: boothId });
+  } catch (e) {}
+
+  await saveCacheStorage(boothId);
+}
+
+// ==========================================
+// メイン処理
+// ==========================================
+async function initialize() {
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    currentBoothId = urlParams.get('booth');
+
+    if (!currentBoothId) {
+      throw new Error("ブース情報がURLに含まれていません。正しいQRコードを読み込んでください。");
+    }
+
+    document.getElementById('booth-display').textContent = `ブース番号: ${currentBoothId}`;
+
+    // ローカルの投票履歴チェック（4重チェック）
+    await checkLocalVoteRecord();
+
+    // 強化版フィンガープリント生成
+    generatedVisitorId = await generateFingerprint();
+
+    // ※GPS（位置情報）チェック機能は削除されました※
+
+    updateUI('ready', '準備完了。ボタンを押して投票してください。');
+  } catch (error) {
+    updateUI('error', error.message);
+  }
+}
+
+async function submitVote() {
+  const voteBtn = document.getElementById('vote-btn');
+  voteBtn.disabled = true;
+  voteBtn.textContent = "投票処理中...";
+
+  try {
+    const timestamp = new Date().getTime();
+    // 署名用のペイロードを作成
+    const payloadString = `${currentBoothId}:${generatedVisitorId}:${timestamp}:${SECURITY_SALT}`;
+    const signature = await sha256(payloadString);
+
+    const postData = {
+      boothId: currentBoothId,
+      visitorId: generatedVisitorId,
+      timestamp: timestamp,
+      signature: signature
+    };
+
+    const response = await fetch(GAS_WEB_APP_URL, {
+      method: 'POST',
+      mode: 'cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(postData)
+    });
+
+    if (!response.ok) throw new Error(`サーバー通信エラー (${response.status})`);
+
+    const textResult = await response.text();
+    let result;
+    try { 
+      result = JSON.parse(textResult); 
+    } catch (e) { 
+      throw new Error("サーバーからの応答形式が不正です。"); 
+    }
+
+    if (result.success) {
+      // 成功した場合のみローカルに痕跡を残す
+      await saveLocalVoteRecord(currentBoothId);
+      updateUI('success', '投票が完了しました。ありがとうございました！');
+    } else {
+      throw new Error(result.error || "投票処理でエラーが発生しました。");
+    }
+
+  } catch (error) {
+    updateUI('error', `エラー: ${error.message}`);
+    voteBtn.disabled = false;
+    voteBtn.textContent = "再試行する";
+  }
+}
+
+// イベントリスナーの登録
+document.getElementById('vote-btn').addEventListener('click', submitVote);
+window.addEventListener('DOMContentLoaded', initialize);
+
+</script>
+</body>
+</html>
